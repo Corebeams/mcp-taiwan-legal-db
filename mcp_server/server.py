@@ -151,10 +151,11 @@ async def lifespan(server: MCPServer):
 mcp = MCPServer(
     name="台灣法律資料庫",
     instructions=(
-        "查詢司法院裁判書、全國法規資料庫、大法官解釋（釋字）與憲法法庭裁判（憲判字）、"
-        "各機關行政函釋與審查基準、最高法院決議／法律問題座談／判例／精選裁判等判解、訴願決定與準司法機關決定、"
-        "立法理由與立法紀錄、憲法法庭卷宗、官方統計與量刑資訊的 MCP 工具。"
-        "釋字/憲判字預設層與理由書從本地快取即時回傳，無需連網。"
+        "即時查詢臺灣官方法律資料：司法院裁判書、全國法規資料庫（含英譯、修法沿革、立法理由）、"
+        "大法官解釋（釋字）與憲法法庭裁判（憲判字）及卷宗、各機關行政函釋與審查基準、"
+        "最高法院決議／法律問題座談／判例／精選裁判等判解、訴願決定與準司法機關決定、"
+        "立法院議案與公報、法規命令及法律草案預告、地方自治法規、條約協定、交易所規章、"
+        "司法與法務統計、量刑統計、法學研究文獻（司法院研究報告、期刊論文、GRB、開放取用期刊）。"
     ),
     lifespan=lifespan,
 )
@@ -181,8 +182,8 @@ async def search_judgments(
     結果自動按法院權威性排序（最高法院→高等法院→地方法院），同層級按原始排序。
     每筆結果含 court（法院名稱）、case_type（民事/刑事/行政）、court_level（1=最高/2=高等/3=地方）。
 
-    【重要】查特定案號時，必須用 case_word + case_number（精確查詢），不要把案號放在 keyword。
-    例如查「114年度上易字第503號」→ case_word="上易", case_number="503", year_from=114。
+    查特定案號用 case_word + case_number（精確比對），例如「114年度上易字第503號」→ case_word="上易",
+    case_number="503", year_from=114；案號放在 keyword 會變成全文檢索，命中的是提到該案號的其他裁判。
     keyword 用於主題式全文檢索（如「預售屋 遲延交屋」）。
     要找「哪些判決引用了某裁判或釋字」時才把完整字號放進 keyword（如「108年度台上大字第2680號」「釋字第748號」），
     結果就是全文提到該字號的裁判。
@@ -191,17 +192,8 @@ async def search_judgments(
     僅零星收錄，80 年（1991）以前查無。查詢早於 89 年的裁判若無結果，應告知使用者是資料源
     不涵蓋，而非該判決不存在。
 
-    【進階實務研究欄位】:
-    - main_text: 裁判主文關鍵字 — 最有效的輸贏方篩選方式。
-      主文措辭高度制度化（依民刑訴訟法條生成），substring match 接近
-      解析半結構化欄位，精度高：
-        * 「被告應將 移轉」→ 被告敗訴（物權移轉類）
-        * 「被告應給付」→ 被告敗訴（金錢給付類）
-        * 「原告之訴駁回」→ 原告敗訴
-        * 「上訴駁回」→ 維持原審
-    可與 keyword 併用，例：
-        找「借名登記成立、被告敗訴」→
-        main_text="被告應將 移轉", keyword="借名登記", case_type="民事"
+    main_text 比對裁判主文，主文用語固定，可用來篩勝敗結果並與 keyword 併用：
+    「被告應將 移轉」「被告應給付」→ 被告敗訴；「原告之訴駁回」→ 原告敗訴；「上訴駁回」→ 維持原審。
 
     Args:
         keyword: 全文檢索關鍵字（對應 jud_kw）
@@ -295,37 +287,39 @@ async def query_regulation(
     include_history: bool = False,
     language: str = "",
 ) -> dict:
-    """查詢全國法規資料庫的法規條文。
+    """查詢全國法規資料庫的條文：單條、區間或跨號多條，一次最多 50 條。
 
-    可查詢單一條文、條號範圍、或法規全文。回傳的 law 另含 last_amended（最新公布日）、category（主管機關分類），
+    不給條號時不回傳條文，只回傳章節目錄（structure：編章節標題與起始條號）與條號範圍，
+    再用 article_no 指定要讀的條文。回傳的 law 另含 last_amended（最新公布日）、category（主管機關分類），
     有特殊施行日時含 effective_date／effective_note（如「自公布後六個月施行」「施行日期由行政院定之」），
     引用新修正條文前應先看這兩欄確認是否已施行。
 
     Args:
         law_name: 法規名稱（如「民法」「勞動基準法」），會自動轉換為 pcode
         pcode: 法規代碼（如「B0000001」），若提供 law_name 可不填
-        article_no: 條號（如「184」「247-1」「15-1」），查詢單一條文
-        from_no: 起始條號（如「184」），查詢條號範圍時使用
-        to_no: 截止條號（如「198」），查詢條號範圍時使用
+        article_no: 單條「184」「247-1」、區間「184~198」、跨號多條「184,185,247-1」，可混用；
+            不填 = 只回目錄。超過 50 條時回傳 has_more 與續查起點，指定卻不存在的單條列在 missing
+        from_no: 起始條號，與 to_no 合用等於 article_no 的「起~迄」
+        to_no: 截止條號
         include_history: 是否包含修法沿革（使用者詢問修法歷程、修正時間、歷次修正內容時設為 True）。
-            搭配 article_no 時，會額外回傳該條文「歷次條文全文」(article_history)，
+            搭配單一條號時，會額外回傳該條文「歷次條文全文」(article_history)，
             可直接前後對比同一條在不同時間的條文細節。
         language: 「en」取官方英譯本（約 970 部法律與部分命令；英譯常落後中文修正，note 會提醒版本差異）
 
     Returns:
         包含法規條文的字典：law (pcode, name, status), articles, source_url,
         history（選填，整部法規的修法沿革文字）,
-        article_history（選填，僅在 include_history+article_no 時提供，為該條歷次條文全文）
+        article_history（選填，僅在 include_history＋單一條號時提供，為該條歷次條文全文）
     """
-    from mcp_server.tools.regulations import get_law_history
+    from mcp_server.tools.regulations import SPEC_HELP, article_label, get_law_history, parse_article_spec
 
     # 解析 pcode
     if not pcode and law_name:
         pcode = reg_client.resolve_pcode(law_name)
         if not pcode:
             return error_response(
-                f"找不到法規「{law_name}」的代碼（pcode）。"
-                f"請使用 get_pcode 工具查詢，或直接提供 pcode。",
+                f"找不到法規「{law_name}」。可用 search_regulations 以名稱中的一段查詢（如「公平交易」），"
+                f"或直接提供 pcode。",
                 law_name=law_name,
             )
 
@@ -335,16 +329,22 @@ async def query_regulation(
     logger.info("query_regulation: law_name=%r, pcode=%r, article_no=%r, range=%s~%s, history=%s, language=%r",
                 law_name, pcode, article_no, from_no, to_no, include_history, language)
 
-    if language.strip().lower() in ("en", "english", "英文"):
-        return await reg_client.get_english(pcode, article_no, from_no, to_no)
+    spec = ",".join(x for x in (article_no.strip(), f"{from_no}~{to_no}" if from_no and to_no else "") if x)
+    try:
+        ranges = parse_article_spec(spec) if spec else None
+    except ValueError:
+        return error_response(f"看不懂條號「{spec}」。{SPEC_HELP}")
+    single = article_label(ranges[0][0]) if ranges and len(ranges) == 1 and ranges[0][0] == ranges[0][1] else ""
 
-    # 查詢邏輯
-    if article_no:
-        result = await reg_client.get_article(pcode, article_no)
-    elif from_no and to_no:
-        result = await reg_client.get_article_range(pcode, from_no, to_no)
+    if language.strip().lower() in ("en", "english", "英文"):
+        return await reg_client.get_english(pcode, ranges)
+
+    if single:
+        result = await reg_client.get_article(pcode, single)
+    elif ranges:
+        result = await reg_client.get_articles(pcode, ranges)
     else:
-        result = await reg_client.get_all_articles(pcode)
+        result = await reg_client.get_outline(pcode)
 
     if result.get("success") and isinstance(result.get("law"), dict):
         result["law"].update(law_meta_fields(pcode))
@@ -357,8 +357,8 @@ async def query_regulation(
     # 查詢單一條文時，額外附上該條歷次條文全文（跨版本前後對比）。現行查無此條（例如已刪除）時
     # 歷史版本仍可能有，照樣查。不論成功與否都回傳 article_history，讓呼叫端能區分「歷史抓取失敗」
     # （available=False + reason）與「確實無歷史/無此條」。
-    if include_history and article_no:
-        result["article_history"] = await reg_client.get_article_history(pcode, article_no)
+    if include_history and single:
+        result["article_history"] = await reg_client.get_article_history(pcode, single)
 
     return result
 
@@ -515,14 +515,13 @@ def get_interpretation(
 
     Args:
         case_id: 解釋/裁判字號字串
-        include_reasoning: 回傳理由書全文（最多 15000 字）
+        include_reasoning: 回傳理由書全文
         reasoning_keyword: 在理由書中搜尋關鍵字並回片段（覆蓋 include_reasoning）
         include_opinions: 回傳意見書全文
         opinions_keyword: 在意見書中搜尋關鍵字並回片段
         opinion_document: 只取標題含此字串的意見書全文（例如大法官姓名「許宗力」）；
-            意見書合計過長被截斷時用。回傳的 opinion_documents 列出每份的標題、官網 PDF 連結與字數
-        opinions_offset: 意見書全文從第幾字開始回傳；單份超過 15000 字被截斷時，
-            以相同參數加上回傳的 opinions_next_offset 續讀後段
+            回傳的 opinion_documents 列出每份的標題、官網 PDF 連結與字數
+        opinions_offset: 意見書全文從第幾字開始回傳（預設 0）
     """
     return _cc_get_interpretation(
         case_id, include_reasoning, reasoning_keyword,
@@ -546,7 +545,8 @@ def search_interpretations(
 ) -> dict:
     """列舉大法官解釋 / 憲法法庭裁判。支援關鍵字全文搜尋（搜爭點 + 理由書）。
 
-    每筆結果帶 case_id，可直接傳給 get_interpretation()。
+    每筆結果帶 case_id，可直接傳給 get_interpretation()。行政機關的函釋、解釋令不在這裡，
+    用 search_agency_interpretations。
 
     Args:
         keyword: 關鍵字（標題/字號/爭點/理由書全文匹配）
@@ -601,6 +601,7 @@ async def search_agency_interpretations(
     page: int = 1,
 ) -> dict:
     """搜尋各機關的行政函釋（解釋令、函釋、法規諮詢意見）與審查基準，即時查詢各機關官方系統。
+    大法官解釋（釋字）與憲判字不在這裡，用 search_interpretations。
 
     來源：法務部（行政函釋、法規諮詢意見）、勞動部（行政函釋、解釋令）、衛生福利部、
     財政部（各稅法令彙編、新頒令釋；主管法規系統另含關務署、國有財產署、國庫署的核釋令）、
@@ -632,7 +633,8 @@ async def search_agency_interpretations(
         keyword: 關鍵字（全文檢索；多個詞以空白分隔）。查特定法條時可用「勞動基準法第24條」這類寫法。
             智慧局審查基準只比對章名（如「專利要件」「混淆誤認」）
         agency: 機關名稱，可用逗號分隔多個，例如「勞動部」「財政部,經濟部」「銓敘部」「地政司」「臺北市」「智慧局」。
-            沒有專屬系統的機關（如 NCC、數位發展部）改查行政院公報中該機關發布的解釋性規定
+            NCC、客委會、僑委會、運動部、關務署新頒釋函與陸委會主站廣告函釋須指名才查。
+            NCC 可查個別函復；陸委會主站限廣告規範。數位發展部只收行政院公報中依法公告的解釋性規定
         year_from: 起始年度（民國年，如 110）
         year_to: 截止年度（民國年，如 114）
         doc_number: 發文字號或其號碼（如「法律字第11403512580號」或「11403512580」）
@@ -756,8 +758,11 @@ async def search_administrative_decisions(
     - 「監察院」：調查報告、糾正案、彈劾案、糾舉案（也可只指定其中一類；官網回應慢，單次可能數十秒）
     - 「律師懲戒」：律師懲戒、懲戒覆審決議（需姓名或案號這類精確關鍵字，符合超過 100 筆時官方回 0 筆）
     - 各部會與地方政府訴願決定：機關名稱如「臺北市」「新北市」「臺中市」「高雄市」「國防部」「交通部」「法務部」
-      「金管會」「退輔會」「原民會」等，或「訴願」查全部（含行政院）。部分網站只能比對標題、只給頁數，差異見各來源的 note。
-      勞動部、財政部、內政部、衛福部、臺南市的查詢需要驗證碼，未收錄。官網公開的內容照原樣提供：部分機關的舊案
+      「金管會」「退輔會」「原民會」「經濟部」「農業部」「教育部」「文化部」「環境部」「勞動部」
+      「內政部」「衛福部」「中選會」「人事總處」「基隆市」等，或「訴願」查全部（含行政院）。部分網站只能比對標題、只給頁數，差異見各來源的 note。
+      農業部／教育部最多五頁。
+      「醫事懲戒」查目前公告（預設西醫師，可用牙醫師等前綴）；只比對姓名、縣市、證書字號，掃描檔只附 PDF。
+      官網公開的內容照原樣提供：部分機關的舊案
       （行政院 108 年以前、法務部約 112 年以前、原民會）未遮蔽訴願人姓名
 
     每筆含 id、agency、category、date、summary（案由）；要讀全文請把 id 傳給 get_administrative_decision。
@@ -893,20 +898,23 @@ async def search_legislative_records(
     - gazette：立法院公報（院會、委員會、公聽會紀錄，含委員與官員發言）；全文檢索，matches 是命中片段。
       查立法者原意時可用「法律名稱＋條次」，例如「勞動基準法第五十五條」
     - drafts：行政院公報刊登的法規命令訂定、修正草案預告（各部會的辦法、細則草案，含陳述意見截止日期）
+    - join：JOIN 平臺的法律草案預告，補足行政院公報法規命令以外的法律草案。
 
     結果的 id 傳給 get_legislative_record 取得全文。每頁 20 筆（drafts 10 筆）。
 
     Args:
         keyword: 關鍵字（法律名稱、條次、議題）
-        kind: bills、gazette 或 drafts
-        status: kind=bills 時使用：pending、all 或 passed
+        kind: bills、gazette、drafts 或 join
+        status: bills 使用 pending、all 或 passed；join 使用 pending（進行中）或 closed（已結束）
         term: 立法院屆別（如 11）；0 = bills 審查中只看本屆、其他不限
         page: 頁數
     """
     if not keyword.strip():
         return error_response("請提供 keyword")
-    if kind not in ("bills", "gazette", "drafts"):
-        return error_response("kind 只能是 bills、gazette 或 drafts")
+    if kind not in ("bills", "gazette", "drafts", "join"):
+        return error_response("kind 只能是 bills、gazette、drafts 或 join")
+    if kind == "join" and status not in ("pending", "closed"):
+        return error_response("JOIN status 只能是 pending（進行中）或 closed（已結束）")
     if kind == "bills" and status not in BILL_APIS:
         return error_response("status 只能是 pending、all 或 passed")
     if page < 1:
@@ -920,7 +928,7 @@ async def search_legislative_records(
 async def get_legislative_record(record_id: str) -> dict:
     """取得立法紀錄全文：議案（bill:…，含提案人、審議進度與關係文書內容）、立法院公報（gazette:…）、
     法規命令草案預告（draft:…，含陳述意見截止日期與草案總說明、條文對照表），
-    或 get_legislative_history 立法歷程列出的公報頁（lispdf:…）。全文超過 60,000 字會截斷。
+    或 get_legislative_history 立法歷程列出的公報頁（lispdf:…）。
 
     Args:
         record_id: search_legislative_records 或 get_legislative_history 回傳的 id
@@ -1029,7 +1037,7 @@ async def search_legal_literature(
     - 司法院專題研究報告（含司法研究年報；法官的實務研究，全文按章分檔）
     - 國家圖書館臺灣期刊論文索引（各法學期刊論文的書目與摘要；作者授權者有全文）
     - 政府研究資訊系統 GRB（國科會與各部會補助的研究計畫摘要；報告全文需在官網下載）
-    - 開放取用法學期刊：中研院法學期刊、政大法學評論（全文取自期刊官網）
+    - 開放取用法學期刊：中研院法學期刊、政大法學評論、臺大法學論叢（臺大只取可定位卷期且標示全文／定稿的 PDF）
     結果的 id 傳給 get_legal_literature 取得摘要與全文。引用時請附作者、篇名、刊名卷期與年份。
 
     Args:
@@ -1050,7 +1058,7 @@ async def search_legal_literature(
 
 @mcp.tool()
 async def get_legal_literature(literature_id: str) -> dict:
-    """取得研究文獻的書目、摘要與全文（有公開全文時；超過 60,000 字會截斷）。
+    """取得研究文獻的書目、摘要與全文（有公開全文時）。
 
     國家圖書館授權的全文只供個人查閱，請勿轉存或散布。
 
@@ -1070,13 +1078,13 @@ async def search_other_regulations(keyword: str, source: str = "", page: int = 1
     """搜尋全國法規資料庫法律命令清單以外的規範（query_regulation 查不到的）。
 
     - 地方自治法規（自治條例、自治規則、委辦規則）：臺北市、新北市、桃園市、臺中市、臺南市、高雄市、基隆市、
-      新竹縣市、苗栗縣、彰化縣、南投縣、嘉義縣市、屏東縣、宜蘭縣、花蓮縣、臺東縣、澎湖縣、金門縣、連江縣
-      （只收現行法規；雲林縣官網有 Cloudflare 驗證，無法連線）
+      新竹縣市、苗栗縣、彰化縣、南投縣、嘉義縣市、屏東縣、宜蘭縣、花蓮縣、臺東縣、澎湖縣、金門縣、連江縣、雲林縣
+      （只收現行法規）
     - 條約及協定：全國法規資料庫的條約（只比對名稱）、外交部條約協定資料庫（可加國家，如「日本 所得稅」；
       部分舊約是掃描檔只有 PDF 連結）、財政部租稅協定（避免雙重課稅協定，名稱多寫「所得稅」）
     - 交易所規章：臺灣證券交易所、證券櫃檯買賣中心、臺灣期貨交易所（櫃買、期交所規章取自證基會法規系統，
       僅供查閱、不得轉載）
-    建議指定 source：不填會同時查全部 27 個來源。結果的 id 傳給 get_other_regulation 取得條文。
+    建議指定 source：不填會同時查全部 28 個來源。結果的 id 傳給 get_other_regulation 取得條文。
 
     Args:
         keyword: 關鍵字（法規名稱或內容）。多數來源把整串當成一個詞，請一次給一個詞，例如「違章建築」；
@@ -1095,13 +1103,15 @@ async def search_other_regulations(keyword: str, source: str = "", page: int = 1
 
 @mcp.tool()
 async def get_other_regulation(regulation_id: str, article_no: str = "") -> dict:
-    """取得地方自治法規、條約協定或交易所規章的全文或單一條文。
+    """取得地方自治法規、條約協定或交易所規章的條文。
 
-    分條的規範回傳 articles（每條含 number、content）；要點、條約等未分條的回傳 full_text。
+    分條的規範依 article_no 回傳 articles（每條含 number、content），一次最多 50 條；不給條號時只回傳
+    article_count 與條號範圍，不回條文。要點、條約等未分條的文件回傳 full_text。
 
     Args:
         regulation_id: search_other_regulations 回傳的 id
-        article_no: 只取某一條（如「15」「15-1」「第十五條之一」）；不填 = 全文
+        article_no: 單條「15」「15-1」「第十五條之一」、區間「1~10」、多條「3,5,15-1」，可混用；
+            不填 = 分條的只回條號範圍，未分條的回全文
     """
     logger.info("get_other_regulation: %s article=%r", regulation_id, article_no)
     return await other_regs.get(regulation_id.strip(), article_no.strip())

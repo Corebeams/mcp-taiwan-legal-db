@@ -36,7 +36,6 @@ from mcp_server.tools.pdf_text import CJK, pdf_to_text
 logger = logging.getLogger(__name__)
 
 USER_AGENT = fint.USER_AGENT
-MAX_TEXT = 60000
 PAGE_SIZE = 20
 MAX_SHEETS = 12
 MAX_COLS = 200
@@ -167,14 +166,11 @@ SHEETS_OMITTED = f"（只列出前 {MAX_SHEETS} 張工作表，其餘請開原�
 
 
 def sheets_to_text(sheets) -> str:
-    parts, size, sheets = [], 0, iter(sheets)
+    parts, sheets = [], iter(sheets)
     for name, rows in itertools.islice(sheets, MAX_SHEETS):
         body = rows_to_text(rows)
         if body:
             parts.append(f"## {name}\n{body}")
-            size += len(parts[-1])
-            if size > MAX_TEXT:
-                break
     else:
         if next(sheets, None) is not None:
             parts.append(SHEETS_OMITTED)
@@ -543,10 +539,10 @@ class StatisticsClient:
         key, _, native_id = stat_id.partition(":")
         if key not in SOURCES or not native_id:
             return error_response(f"id 格式錯誤：「{stat_id}」，請使用搜尋結果回傳的 id")
-        cache_key = f"statistics:{stat_id}"
+        cache_key = f"statistics:v2:{stat_id}"  # v2 起不按字數截斷，舊快取不沿用
+        search_key = {"tool": "statistics_get", "v": 2, "id": stat_id}
         # 法務統計常用統計表每月滾動更新，只快取一天；其他來源是固定檔案，走長期快取
-        cached = await (self.cache.get_search({"tool": "statistics_get", "id": stat_id}) if key == "moj"
-                        else self.cache.get_judgment(cache_key))
+        cached = await (self.cache.get_search(search_key) if key == "moj" else self.cache.get_judgment(cache_key))
         if cached:
             return {"success": True, "cached": True, **cached}
         label, _, _, get = SOURCES[key]
@@ -559,10 +555,9 @@ class StatisticsClient:
         data = {"id": stat_id, "source": label, **data}
         for k in ("table_text", "full_text"):
             if k in data:
-                data["truncated"] = len(data[k]) > MAX_TEXT or data[k].endswith(SHEETS_OMITTED)
-                data[k] = data[k][:MAX_TEXT]
+                data["truncated"] = data.get("truncated", False) or data[k].endswith(SHEETS_OMITTED)
         if key == "moj":
-            await self.cache.set_search({"tool": "statistics_get", "id": stat_id}, data, ttl=int(_TTL))
+            await self.cache.set_search(search_key, data, ttl=int(_TTL))
         else:
             await self.cache.set_judgment(cache_key, data, source="statistics")
         return {"success": True, "cached": False, **data}

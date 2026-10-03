@@ -29,14 +29,13 @@ import httpx
 from bs4 import BeautifulSoup
 
 from mcp_server.cache.db import CacheDB
-from mcp_server.tools import fint, tls
+from mcp_server.tools import public_browser, fint, regulations, tls
 from mcp_server.tools._errors import error_response
 from mcp_server.tools.agency_interpretations import _date, _text
 from mcp_server.tools.pdf_text import pdf_to_text
 
 logger = logging.getLogger(__name__)
 
-MAX_TEXT = 60000
 PAGE_SIZE = 20
 SELAW_NOTE = ("資料取自證券暨期貨法令判解查詢系統（selaw.com.tw），該站載明非經提供單位書面授權不得轉載；"
               "僅供個案查閱，引用前請向發布單位核對。")
@@ -172,11 +171,17 @@ def _group(source: str, category: str, total: int, items: list[dict], has_more: 
 _GLRS_ID = re.compile(r"^[A-Z]{2}\d{6}$")
 
 
+async def _glrs_request(http, url: str, **kwargs):
+    if url.startswith("https://law.yunlin.gov.tw/"):
+        return await public_browser.get(http, url, selector=".tab-result, .tab-edit, [id$=lblMsg]", **kwargs)
+    return await http.get(url, **kwargs)
+
+
 async def _glrs_search(base: str, issuer: str, http, keyword: str, page: int) -> dict:
     # LawQuery.aspx 的 POST 會 302 到這個 GET；GroupID 6 自治條例、7 自治規則（及委辦規則）、2 行政規則（各站一致）
     # 不要帶 content=0 之類的 0 值參數：會被導到錯誤頁 LR007
     params = {"NLawTypeID": "all", "GroupID": "6,7,2", "KW": keyword, "name": "1", "content": "1", "now": "1", "page": page}
-    soup = _soup(await http.get(base + "LawResult.aspx", params=params))
+    soup = _soup(await _glrs_request(http, base + "LawResult.aspx", params=params))
     items = []
     for tr in soup.select("table.tab-result tr"):
         tds, a = tr.find_all("td"), tr.select_one("a[id$=hlkLawName]")
@@ -193,7 +198,7 @@ async def _glrs_get(base: str, issuer: str, http, native_id: str) -> dict:
     if not _GLRS_ID.match(native_id):
         raise LookupError(native_id)
     url = f"{base}LawContent.aspx?id={native_id}"
-    soup = _soup(await http.get(url))
+    soup = _soup(await _glrs_request(http, url))
     fields = _fields(soup.select("table.tab-edit tr"))
     body = soup.select_one("#ctl00_cp_content_divContent")
     if not fields.get("法規名稱") or body is None:
@@ -573,6 +578,7 @@ async def _selaw_get(org: str, label: str, http, sid: str) -> dict:
 
 # 代碼 → (縣市, 網址前綴, 額外別名)；皆已實測可連線
 _GLRS_SITES = {
+    "yunlin": ("雲林縣", "https://law.yunlin.gov.tw/", ()),
     "taichung": ("臺中市", "https://law.taichung.gov.tw/", ("中市",)),
     "kaohsiung": ("高雄市", "https://outlaw.kcg.gov.tw/", ("高市",)),
     "tainan": ("臺南市", "https://law01.tainan.gov.tw/glrsnewsout/", ("南市",)),
@@ -643,32 +649,45 @@ def resolve_sources(source: str) -> list[str] | None:
     return list(dict.fromkeys(keys))
 
 
+def _spec(article_no: str):
+    """條號寫法同 query_regulation（單條、區間、多條）；中文數字條號先轉成阿拉伯數字。條號看不懂丟 ValueError。"""
+    return regulations.parse_article_spec(re.sub(r"[^,，、;；~～至到]+", lambda m: _article_no(m.group()), article_no))
+
+
 def _shape(data: dict, article_no: str) -> dict:
-    """依 article_no 篩條文（未分條的全文會先試著切條），再把總長截在 MAX_TEXT。"""
+    """分條的規範：依 article_no 選條文（一次最多 50 條），沒指定時只回條號範圍；未分條的要點、條約回傳全文。"""
     data = dict(data)
-    if article_no:
-        target = _article_no(article_no)
-        articles = data.get("articles") or _split_articles((data.get("full_text") or "").splitlines())
-        hit = [a for a in articles if a["number"] == target]
-        if not hit:
-            raise LookupError(f"查無第 {article_no} 條" + ("" if articles else "（此文件未分條，請改看 full_text）"))
-        data.pop("full_text", None)
-        data["articles"] = hit
-    if data.get("articles"):
-        kept, size = [], 0
-        for a in data["articles"]:
-            size += len(a["content"])
-            if size > MAX_TEXT and kept:
-                break
-            kept.append(a)
-        data["truncated"] = len(kept) < len(data["articles"])
-        data["articles"] = kept
-    else:
-        text = data.get("full_text") or ""
-        data["truncated"] = len(text) > MAX_TEXT
-        data["full_text"] = text[:MAX_TEXT]
-    if data["truncated"]:
-        data["note"] = " ".join(filter(None, [data.get("note"), f"內容超過 {MAX_TEXT} 字已截斷，可用 article_no 指定條號。"]))
+    articles = data.get("articles") or _split_articles((data.get("full_text") or "").splitlines())
+    if not article_no:
+        if len(articles) > 1:
+            if not data.get("articles"):  # 條約的前言、締約背景在第一條之前，切條時不會收進任何一條
+                head = []
+                for line in (data.get("full_text") or "").splitlines():
+                    if _ART_HEAD.match(line.strip()):
+                        break
+                    head.append(line)
+                if "".join(head).strip():
+                    data["preamble"] = "\n".join(head).strip()
+            data.pop("articles", None)
+            data.pop("full_text", None)
+            if any(not re.fullmatch(r"\d+(-\d+)*", a["number"]) for a in articles):  # 「壹」「貳」這類標籤要照列才指定得到
+                data["article_numbers"] = [a["number"] for a in articles]
+            data.update(article_count=len(articles), first_article=articles[0]["number"],
+                        last_article=articles[-1]["number"], note=" ".join(filter(None, [data.get("note"),
+                        "未指定條號，只回傳條號範圍；用 article_no 指定要讀的條文。" + regulations.SPEC_HELP])))
+        return data
+    if not articles:
+        raise LookupError("此文件未分條，請不帶 article_no 讀 full_text")
+    # ponytail: 非數字標籤（壹、貳）只支援一次指定一個，原樣比對
+    exact = [a for a in articles if a["number"] == _article_no(article_no)]
+    hits, extra = (exact, {}) if exact else regulations._pick(articles, _spec(article_no))
+    if not hits:
+        raise LookupError(f"查無第 {article_no} 條")
+    data.pop("full_text", None)
+    data["articles"] = hits
+    if extra.get("note"):
+        extra["note"] = " ".join(filter(None, [data.get("note"), extra["note"]]))
+    data.update(extra)
     return data
 
 
@@ -727,7 +746,7 @@ class OtherRegulationClient:
                 data = await get(self.http, native_id)
             except LookupError:
                 return error_response(f"{label}查無此件：{reg_id}")
-            except (httpx.HTTPError, ValueError) as e:
+            except (httpx.HTTPError, ValueError, RuntimeError) as e:
                 return error_response(f"{label}連線或解析失敗：{type(e).__name__}: {e}")
             data = {"id": reg_id, "source": label, **data}
             await self.cache.set_regulation(reg_id, data)
@@ -735,3 +754,5 @@ class OtherRegulationClient:
             return {"success": True, "cached": cached, **_shape(data, article_no)}
         except LookupError as e:
             return error_response(f"{data['title']}{e.args[0]}", id=reg_id)
+        except ValueError:
+            return error_response(f"看不懂條號「{article_no}」。{regulations.SPEC_HELP}", id=reg_id)
