@@ -13,6 +13,8 @@ import sys
 import time
 from typing import Optional
 
+import httpx
+
 from mcp_server.config import USER_DATA_DIR
 
 logger = logging.getLogger(__name__)
@@ -221,28 +223,58 @@ class JudicialWAFBypass:
 
 
 async def get_with_waf_retry(
-    client, url, waf: JudicialWAFBypass, *, method: str = "GET", **kwargs
+    client,
+    url,
+    waf: JudicialWAFBypass,
+    *,
+    method: str = "GET",
+    max_retries: int = 2,
+    retry_delay: float = 0.5,
+    **kwargs,
 ):
-    """HTTP 請求 + 偵測被擋自動重跑 warmup 後重試一次。
+    """HTTP 請求；暫時性失敗退避重試，WAF 擋下時刷新 cookies 後重送。
 
     Args:
         client: httpx.AsyncClient 實例
         url: 目標 URL
         waf: JudicialWAFBypass 實例
         method: "GET" 或 "POST"
+        max_retries: transport error、429 或 5xx 的額外重試次數
+        retry_delay: 指數退避的起始秒數
         **kwargs: 傳給 client.get / client.post 的額外參數（如 params, data）
     """
     func = client.get if method == "GET" else client.post
-    r = await func(url, **kwargs)
-    if waf.is_blocked(r.text):
-        logger.info("WAF bypass: detected block, refreshing cookies")
-        await waf.refresh()
-        client.cookies.update(waf.get_cookies())
-        r = await func(url, **kwargs)
-        if waf.is_blocked(r.text):
+    waf_retried = False
+    retry_count = 0
+
+    while True:
+        try:
+            response = await func(url, **kwargs)
+        except httpx.TransportError:
+            if retry_count >= max_retries:
+                raise
+            await asyncio.sleep(min(retry_delay * (2 ** retry_count), 5.0))
+            retry_count += 1
+            continue
+
+        if response.status_code == 429 or response.status_code >= 500:
+            if retry_count >= max_retries:
+                return response
+            await asyncio.sleep(min(retry_delay * (2 ** retry_count), 5.0))
+            retry_count += 1
+            continue
+
+        if not waf.is_blocked(response.text):
+            return response
+
+        if waf_retried:
             # 刷新後仍被擋：若不 raise，上游 parser 會吃到 block HTML
             # 然後輸出空結果 / 垃圾資料，使用者看到的是「查無結果」。
             raise WAFPermanentBlockError(
                 "司法院 WAF 在重新整理 cookies 後仍持續擋請求"
             )
-    return r
+
+        logger.info("WAF bypass: detected block, refreshing cookies")
+        await waf.refresh()
+        client.cookies.update(waf.get_cookies())
+        waf_retried = True
