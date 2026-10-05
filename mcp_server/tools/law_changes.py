@@ -131,7 +131,7 @@ def _parse_result_page(html: str, page_url: str) -> tuple[list[dict], str | None
             query = parse_qs(urlparse(absolute_url).query)
             pcode = (query.get("pcode") or query.get("PCODE") or [None])[0]
             if pcode:
-                absolute_url = f"{LAW_BASE_URL}/LawClass/LawAll.aspx?PCode={pcode}"
+                absolute_url = f"{LAW_BASE_URL}/LawClass/LawAll.aspx?PCODE={pcode}"
 
             changed, changed_roc = _change_date(row_text)
             item = {

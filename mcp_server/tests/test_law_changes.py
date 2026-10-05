@@ -77,7 +77,7 @@ async def test_search_defaults_all_filters_and_follows_result_pages():
     assert result["results"][0]["category"] == "中央法規"
     assert result["results"][0]["change_date"] == "2026-09-23"
     assert result["results"][0]["source_url"] == (
-        "https://law.moj.gov.tw/LawClass/LawAll.aspx?PCode=B0000001"
+        "https://law.moj.gov.tw/LawClass/LawAll.aspx?PCODE=B0000001"
     )
 
 

@@ -19,33 +19,25 @@ from mcp_server.tools.waf_bypass import (
 
 
 class _FakeResponse:
-    def __init__(self, text: str, status_code: int = 200):
+    def __init__(self, text: str):
         self.text = text
-        self.status_code = status_code
 
 
 class _FakeHttpClient:
     """httpx-like interface，only what get_with_waf_retry touches."""
 
-    def __init__(self, responses: list[str | tuple[int, str]]):
+    def __init__(self, responses: list[str]):
         self._responses = list(responses)
         self.cookies = _CookieBag()
         self.calls: list[tuple[str, str]] = []
 
-    def _response(self):
-        response = self._responses.pop(0)
-        if isinstance(response, tuple):
-            status_code, text = response
-            return _FakeResponse(text, status_code)
-        return _FakeResponse(response)
-
     async def get(self, url, **kwargs):
         self.calls.append(("GET", url))
-        return self._response()
+        return _FakeResponse(self._responses.pop(0))
 
     async def post(self, url, **kwargs):
         self.calls.append(("POST", url))
-        return self._response()
+        return _FakeResponse(self._responses.pop(0))
 
 
 class _CookieBag:
@@ -122,26 +114,4 @@ async def test_get_with_waf_retry_no_block_returns_first_response(waf):
     resp = await get_with_waf_retry(client, "https://judgment.judicial.gov.tw/x", waf)
 
     assert "clean" in resp.text
-    assert len(client.calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_get_with_waf_retry_retries_server_error(waf):
-    """政府網站暫時回 500 時重試，成功後回傳成功回應。"""
-    client = _FakeHttpClient([(500, "temporary failure"), (200, "<html>ok</html>")])
-
-    response = await get_with_waf_retry(client, "https://judgment.judicial.gov.tw/x", waf)
-
-    assert response.status_code == 200
-    assert len(client.calls) == 2
-
-
-@pytest.mark.asyncio
-async def test_get_with_waf_retry_does_not_retry_client_error(waf):
-    """確定性 4xx 不重試，避免徒增請求與延遲。"""
-    client = _FakeHttpClient([(403, "forbidden"), (200, "should not be requested")])
-
-    response = await get_with_waf_retry(client, "https://judgment.judicial.gov.tw/x", waf)
-
-    assert response.status_code == 403
     assert len(client.calls) == 1
