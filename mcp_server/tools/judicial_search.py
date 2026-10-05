@@ -234,7 +234,12 @@ class JudicialSearchClient:
                 outer_responses = [probe]
                 if len(sys_codes) > 1:
                     outer_tasks = [
-                        client.get(_QRYRESULT_URL, params={**base_params, "sys": sc})
+                        get_with_waf_retry(
+                            client,
+                            _QRYRESULT_URL,
+                            self.waf,
+                            params={**base_params, "sys": sc},
+                        )
                         for sc in sys_codes[1:]
                     ]
                     outer_responses += list(
@@ -250,7 +255,7 @@ class JudicialSearchClient:
                         src = m.group(1).replace("&amp;", "&")
                         if not src.startswith("http"):
                             src = _QRYRESULT_BASE + src
-                        iframe_tasks.append(client.get(src))
+                        iframe_tasks.append(get_with_waf_retry(client, src, self.waf))
 
                 if not iframe_tasks:
                     logger.info("精確搜尋: 無 iframe src，可能無結果")
