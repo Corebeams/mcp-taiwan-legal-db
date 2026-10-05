@@ -31,7 +31,7 @@ Taiwan's legal data is public. Open-sourcing this so nobody has to write the sam
 
 | Feature | Description |
 |---------|-------------|
-| **26 MCP tools** | Judgment search / full text / appeal history, regulation queries (incl. English translations and amendment tracking), 釋字 / 憲判字 lookup, citation graph, Constitutional Court case files, administrative interpretations and examination guidelines, resolutions / Q&A conferences / precedents, appeal and quasi-judicial decisions, legislative reasons and records, statistics and sentencing, legal literature, local regulations and treaties |
+| **27 MCP tools** | Judgment search / full text / appeal history, regulation queries and period-based changes, 釋字 / 憲判字 lookup, citation graph, Constitutional Court case files, administrative interpretations and examination guidelines, resolutions / Q&A conferences / precedents, appeal and quasi-judicial decisions, legislative reasons and records, statistics and sentencing, legal literature, local regulations and treaties |
 | **Offline cache** | 871 Grand Justices interpretations and Constitutional Court judgments (with full reasoning text, plus Justices' opinions extracted from the official PDFs) served instantly from bundled data |
 | **Citation graph** | Extracts every 釋字 / 憲判字 cited in an interpretation's reasoning (backward), or lists later 釋字 / 憲判字 that cite it (forward), for tracing the evolution of constitutional doctrine |
 | **Full-text search** | Keyword search over judgments + 釋字 issue / reasoning full text |
@@ -62,7 +62,7 @@ After install, the `mcp-taiwan-legal-db` entry point is on your PATH. **Wire it 
 claude mcp add taiwan-legal-db mcp-taiwan-legal-db --scope user
 ```
 
-Then `/mcp` to reload, and Claude will pick up the 26 MCP tools on natural-language queries.
+Then `/mcp` to reload, and Claude will pick up the 27 MCP tools on natural-language queries.
 
 **Chromium**: the Judicial Yuan WAF fallback and the sources that need a browser (Ministry of Culture appeals, NCC, Yunlin County and others) download and install it automatically on first use (about 150 MB, once). In environments without outbound downloads, install it in advance:
 
@@ -91,14 +91,14 @@ python3 -m venv .venv
 # 3. Install Playwright Chromium for official sources that require a browser
 .venv/bin/playwright install chromium
 
-# 4. Verify the server starts and registers all 26 tools
+# 4. Verify the server starts and registers all 27 tools
 .venv/bin/python -c "
 import asyncio
 from mcp_server.server import mcp
 print('Server:', mcp.name)
 tools = asyncio.run(mcp.list_tools())
 print('Tools:', [t.name for t in tools])
-assert len(tools) == 26, f'Expected 26 tools, got {len(tools)}'
+assert len(tools) == 27, f'Expected 27 tools, got {len(tools)}'
 print('✓ Setup OK')
 "
 ```
@@ -106,7 +106,7 @@ print('✓ Setup OK')
 **Expected output:**
 ```
 Server: 台灣法律資料庫
-Tools: ['search_judgments', 'get_judgment', 'query_regulation', 'get_pcode', 'search_regulations', 'get_interpretation', 'search_interpretations', 'get_citations', 'search_agency_interpretations', 'get_agency_interpretation', 'search_precedents', 'get_precedent', 'search_administrative_decisions', 'get_administrative_decision', 'get_legislative_history', 'search_constitutional_docket', 'get_constitutional_case_file', 'search_legislative_records', 'get_legislative_record', 'search_statistics', 'get_statistics', 'get_sentencing_statistics', 'search_legal_literature', 'get_legal_literature', 'search_other_regulations', 'get_other_regulation']
+Tools: ['search_judgments', 'get_judgment', 'query_regulation', 'search_law_changes', 'get_pcode', 'search_regulations', 'get_interpretation', 'search_interpretations', 'get_citations', 'search_agency_interpretations', 'get_agency_interpretation', 'search_precedents', 'get_precedent', 'search_administrative_decisions', 'get_administrative_decision', 'get_legislative_history', 'search_constitutional_docket', 'get_constitutional_case_file', 'search_legislative_records', 'get_legislative_record', 'search_statistics', 'get_statistics', 'get_sentencing_statistics', 'search_legal_literature', 'get_legal_literature', 'search_other_regulations', 'get_other_regulation']
 ✓ Setup OK
 ```
 
@@ -116,7 +116,7 @@ If that prints without errors, you're done. The repo ships a `.mcp.json` at the 
 
 ## What you get
 
-26 MCP tools, all read-only, all hitting only official public databases (see [Data sources](#data-sources)).
+27 MCP tools, all read-only, all hitting only official public databases (see [Data sources](#data-sources)).
 
 ### Statutes and judgments
 
@@ -125,6 +125,7 @@ If that prints without errors, you're done. The repo ships a `.mcp.json` at the 
 | `search_judgments` | Search Judicial Yuan judgment database | `search_judgments(case_word="台上", case_number="3753", year_from=114, court="最高法院")` |
 | `get_judgment` | Fetch full text of a single judgment by JID or URL, with its appeal history | `get_judgment(jid="TPSM,114,台上,3753,20251112,1")` |
 | `query_regulation` | Query regulation articles (single, range, or a list across the law), the chapter outline, amendment history, official English translation | `query_regulation(law_name="民法", article_no="184~186,247-1")` |
+| `search_law_changes` | Search law and precedent changes by period, category, search field and validity | `search_law_changes(date_from="2026-09-01", date_to="2026-09-30")` |
 | `get_pcode` | Resolve regulation name → pcode (law code) | `get_pcode(law_name="律師法")` → `"I0020006"` |
 | `search_regulations` | Keyword search across 11,700+ regulations, or list those amended since a date | `search_regulations(keyword="勞動")` |
 
@@ -291,6 +292,25 @@ search_regulations(amended_since="115-07-01", category="勞動部")
 ```
 
 Each result carries `last_amended` and `category`, which makes this usable for tracking amendments.
+</details>
+
+<details>
+<summary><b><code>search_law_changes</code></b></summary>
+
+Search law and precedent changes through the Ministry of Justice [integrated legal database search](https://law.moj.gov.tw/Law/LawSearchAll.aspx). Categories, search items, and validity statuses default to all selected when omitted; pass a subset to narrow the query. Dates accept Gregorian `YYYY-MM-DD` or seven-digit ROC format.
+
+```python
+search_law_changes(date_from="2026-09-01", date_to="2026-09-30")
+search_law_changes(
+  date_from="1150901",
+  date_to="1150930",
+  categories=["central_laws"],
+  search_items=["law_name"],
+  valid_statuses=["current"],
+)
+```
+
+`has_more=True` means the result exceeded `max_results`; narrow the date range to fetch another batch.
 </details>
 
 <details>
@@ -937,7 +957,7 @@ mcp-taiwan-legal-db/
 ├── pyproject.toml         # Package metadata and deps
 └── mcp_server/
     ├── __init__.py
-    ├── server.py          # MCPServer entry — defines the 26 @mcp.tool() functions
+    ├── server.py          # MCPServer entry — defines the 27 @mcp.tool() functions
     ├── config.py          # URLs, court codes, cache TTLs, allowed domains
     ├── updater.py         # Standalone pcode_all.json refresh script
     ├── healthcheck.py     # Live health check of the official sources (python -m mcp_server.healthcheck)
@@ -955,6 +975,7 @@ mcp-taiwan-legal-db/
     │   ├── judicial_search.py      # search_judgments
     │   ├── judicial_doc.py         # get_judgment (incl. appeal history)
     │   ├── regulations.py          # query_regulation, get_pcode, search_regulations
+    │   ├── law_changes.py          # search_law_changes (MOJ integrated search)
     │   ├── constitutional_court.py # get_interpretation, search_interpretations, get_citations
     │   ├── constitutional_docket.py # search_constitutional_docket, get_constitutional_case_file
     │   ├── agency_interpretations.py # search_agency_interpretations, get_agency_interpretation

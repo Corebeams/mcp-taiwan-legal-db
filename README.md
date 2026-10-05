@@ -27,7 +27,7 @@
 
 | 功能 | 說明 |
 |------|------|
-| **26 個 MCP 工具** | 裁判書搜尋/全文/歷審、法規查詢（含英譯與修法追蹤）、釋字/憲判字查詢、引用關係圖譜、憲法法庭卷宗、行政函釋與審查基準、判解、訴願與準司法決定、立法理由與立法紀錄、統計與量刑、法學文獻、地方法規與條約 |
+| **27 個 MCP 工具** | 裁判書搜尋/全文/歷審、法規查詢與期間異動、釋字/憲判字查詢、引用關係圖譜、憲法法庭卷宗、行政函釋與審查基準、判解、訴願與準司法決定、立法理由與立法紀錄、統計與量刑、法學文獻、地方法規與條約 |
 | **離線快取** | 871 筆大法官解釋與憲判字（含理由書全文，以及從官網 PDF 擷取的大法官意見書全文）從本地資料即時回傳 |
 | **引用關係圖譜** | 從理由書抽取所有引用的釋字/憲判字（往前追溯），或列出後來引用某件的釋字/憲判字（往後追溯），追溯憲法學說演變 |
 | **全文搜尋** | 裁判書關鍵字搜尋 + 釋字爭點/理由書全文搜尋 |
@@ -58,7 +58,7 @@ pip install mcp-taiwan-legal-db
 claude mcp add taiwan-legal-db mcp-taiwan-legal-db --scope user
 ```
 
-接著 `/mcp` 重啟連線、Claude 就會在自然語言查詢時自動用 26 個 MCP tool。
+接著 `/mcp` 重啟連線、Claude 就會在自然語言查詢時自動用 27 個 MCP tool。
 
 **Chromium**：司法院 WAF fallback，以及文化部訴願、NCC、雲林縣等需要瀏覽器的來源，會在第一次需要時自動下載安裝（約 150MB，僅一次）。無法連外下載的環境請預先安裝：
 
@@ -87,14 +87,14 @@ python3 -m venv .venv
 # 3. 安裝 Playwright Chromium（供需要瀏覽器的官方來源使用）
 .venv/bin/playwright install chromium
 
-# 4. 驗證伺服器可以啟動並註冊 26 個工具
+# 4. 驗證伺服器可以啟動並註冊 27 個工具
 .venv/bin/python -c "
 import asyncio
 from mcp_server.server import mcp
 print('Server:', mcp.name)
 tools = asyncio.run(mcp.list_tools())
 print('Tools:', [t.name for t in tools])
-assert len(tools) == 26, f'Expected 26 tools, got {len(tools)}'
+assert len(tools) == 27, f'Expected 27 tools, got {len(tools)}'
 print('✓ Setup OK')
 "
 ```
@@ -102,7 +102,7 @@ print('✓ Setup OK')
 **預期輸出：**
 ```
 Server: 台灣法律資料庫
-Tools: ['search_judgments', 'get_judgment', 'query_regulation', 'get_pcode', 'search_regulations', 'get_interpretation', 'search_interpretations', 'get_citations', 'search_agency_interpretations', 'get_agency_interpretation', 'search_precedents', 'get_precedent', 'search_administrative_decisions', 'get_administrative_decision', 'get_legislative_history', 'search_constitutional_docket', 'get_constitutional_case_file', 'search_legislative_records', 'get_legislative_record', 'search_statistics', 'get_statistics', 'get_sentencing_statistics', 'search_legal_literature', 'get_legal_literature', 'search_other_regulations', 'get_other_regulation']
+Tools: ['search_judgments', 'get_judgment', 'query_regulation', 'search_law_changes', 'get_pcode', 'search_regulations', 'get_interpretation', 'search_interpretations', 'get_citations', 'search_agency_interpretations', 'get_agency_interpretation', 'search_precedents', 'get_precedent', 'search_administrative_decisions', 'get_administrative_decision', 'get_legislative_history', 'search_constitutional_docket', 'get_constitutional_case_file', 'search_legislative_records', 'get_legislative_record', 'search_statistics', 'get_statistics', 'get_sentencing_statistics', 'search_legal_literature', 'get_legal_literature', 'search_other_regulations', 'get_other_regulation']
 ✓ Setup OK
 ```
 
@@ -112,7 +112,7 @@ Tools: ['search_judgments', 'get_judgment', 'query_regulation', 'get_pcode', 'se
 
 ## 有什麼工具可以用
 
-26 個 MCP 工具，全部唯讀，全部只連線官方公開資料庫（見「資料來源與統計」）。
+27 個 MCP 工具，全部唯讀，全部只連線官方公開資料庫（見「資料來源與統計」）。
 
 ### 法規與裁判
 
@@ -121,6 +121,7 @@ Tools: ['search_judgments', 'get_judgment', 'query_regulation', 'get_pcode', 'se
 | `search_judgments` | 搜尋司法院裁判書資料庫 | `search_judgments(keyword="預售屋 遲延交屋", case_type="民事")` |
 | `get_judgment` | 依 JID 或 URL 取得單筆判決全文與歷審清單 | `get_judgment(jid="TPSM,114,台上,3753,20251112,1")` |
 | `query_regulation` | 查詢法規條文（單條、區間、跨號多條）、章節目錄、修法沿革、官方英譯 | `query_regulation(law_name="民法", article_no="184~186,247-1")` |
+| `search_law_changes` | 依期間、法規類別、檢索項目與有效狀態查詢法規/判例異動 | `search_law_changes(date_from="2026-09-01", date_to="2026-09-30")` |
 | `get_pcode` | 將法規名稱解析為 pcode（法規代號） | `get_pcode(law_name="律師法")` |
 | `search_regulations` | 以關鍵字搜尋 11,700+ 部法規，或列出某日以後修正公布的法規 | `search_regulations(keyword="勞動")` |
 
@@ -268,6 +269,25 @@ search_regulations(keyword="消費", exclude_abolished=True)
 search_regulations(amended_since="2026-09-01")
 search_regulations(amended_since="115-07-01", category="勞動部")
 ```
+</details>
+
+<details>
+<summary><b><code>search_law_changes</code></b></summary>
+
+使用法務部[全國法規資料庫綜合查詢](https://law.moj.gov.tw/Law/LawSearchAll.aspx)搜尋期間內更新的法規與判例。查詢類別、檢索項目、有效狀態省略時預設全選；可只選需要的選項。日期可用西元 `YYYY-MM-DD` 或民國七碼格式。
+
+```python
+search_law_changes(date_from="2026-09-01", date_to="2026-09-30")
+search_law_changes(
+  date_from="1150901",
+  date_to="1150930",
+  categories=["central_laws"],
+  search_items=["law_name"],
+  valid_statuses=["current"],
+)
+```
+
+`has_more=True` 表示結果超過 `max_results`；縮小查詢期間即可繼續分批查詢。
 </details>
 
 <details>
@@ -914,7 +934,7 @@ mcp-taiwan-legal-db/
 ├── pyproject.toml         # 套件 metadata 與相依
 └── mcp_server/
     ├── __init__.py
-    ├── server.py          # MCPServer 入口 — 定義 26 個 @mcp.tool() function
+    ├── server.py          # MCPServer 入口 — 定義 27 個 @mcp.tool() function
     ├── config.py          # URL、法院代碼、快取 TTL、allowed domains
     ├── updater.py         # 獨立的 pcode_all.json 更新 script
     ├── healthcheck.py     # 官方來源即時健康檢查（python -m mcp_server.healthcheck）
@@ -932,6 +952,7 @@ mcp-taiwan-legal-db/
     │   ├── judicial_search.py      # search_judgments
     │   ├── judicial_doc.py         # get_judgment（含歷審清單）
     │   ├── regulations.py          # query_regulation, get_pcode, search_regulations
+    │   ├── law_changes.py          # search_law_changes（法務部綜合查詢）
     │   ├── constitutional_court.py # get_interpretation, search_interpretations, get_citations
     │   ├── constitutional_docket.py # search_constitutional_docket, get_constitutional_case_file
     │   ├── agency_interpretations.py # search_agency_interpretations, get_agency_interpretation

@@ -22,6 +22,12 @@ from mcp_server.tools.legislative_records import BILL_APIS, LegislativeRecordsCl
 from mcp_server.tools.statistics import StatisticsClient
 from mcp_server.tools.literature import LiteratureClient
 from mcp_server.tools.other_regulations import OtherRegulationClient
+from mcp_server.tools.law_changes import (
+    LawChangeCategory,
+    LawChangeSearchClient,
+    LawChangeSearchItem,
+    LawChangeStatus,
+)
 from mcp_server.tools.sentencing import sentencing_statistics
 from mcp_server.tools.fint import USER_AGENT
 import httpx
@@ -59,6 +65,7 @@ stats: StatisticsClient | None = None
 sentencing_http: httpx.AsyncClient | None = None
 literature: LiteratureClient | None = None
 other_regs: OtherRegulationClient | None = None
+law_change_search: LawChangeSearchClient | None = None
 
 
 async def _maybe_update_pcode_all():
@@ -93,7 +100,7 @@ def _log_background_task_exception(task: asyncio.Task) -> None:
 async def lifespan(server: MCPServer):
     """伺服器生命週期：啟動時初始化，關閉時清理"""
     global cache, reg_client, jud_search, jud_doc, waf, interp, precedents, decisions, legislative
-    global docket, leg_records, stats, sentencing_http, literature, other_regs
+    global docket, leg_records, stats, sentencing_http, literature, other_regs, law_change_search
 
     # 啟動
     cache = CacheDB()
@@ -115,6 +122,7 @@ async def lifespan(server: MCPServer):
     sentencing_http = httpx.AsyncClient(timeout=60.0, headers={"User-Agent": USER_AGENT}, follow_redirects=True)
     literature = LiteratureClient(cache)
     other_regs = OtherRegulationClient(cache)
+    law_change_search = LawChangeSearchClient()
 
     logger.info("台灣法律資料庫 MCP Server 已啟動")
 
@@ -143,6 +151,7 @@ async def lifespan(server: MCPServer):
     await sentencing_http.aclose()
     await literature.close()
     await other_regs.close()
+    await law_change_search.close()
     await cache.close()
     logger.info("MCP Server 已關閉")
 
@@ -364,7 +373,46 @@ async def query_regulation(
 
 
 # ============================================================
-# 工具 4：法規名稱轉 pcode
+# 工具 4：搜尋法規異動
+# ============================================================
+
+@mcp.tool()
+async def search_law_changes(
+    keyword: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    document_number: str = "",
+    categories: list[LawChangeCategory] | None = None,
+    search_items: list[LawChangeSearchItem] | None = None,
+    valid_statuses: list[LawChangeStatus] | None = None,
+    max_results: int = 100,
+) -> dict:
+    """查詢法務部全國法規資料庫的法規與判例異動。
+
+    categories 可選 central_laws、treaties、cross_strait_agreements、
+    constitutional_court_new、grand_justices_old、
+    supreme_court_civil_precedents、supreme_court_criminal_precedents、
+    supreme_administrative_court_precedents。search_items 可選 law_name、
+    article_content；valid_statuses 可選 current、repealed。三者省略時預設全選。
+
+    查詢條件至少提供 keyword、完整日期區間或 document_number 其中一項。
+    日期可用西元 YYYY-MM-DD 或民國七碼（例如 1150924）。
+    預設每項查詢最多回傳 100 筆，結果可能分頁，has_more 為 True 時可縮小期間再查。
+    """
+    return await law_change_search.search(
+        keyword=keyword,
+        date_from=date_from,
+        date_to=date_to,
+        document_number=document_number,
+        categories=categories,
+        search_items=search_items,
+        valid_statuses=valid_statuses,
+        max_results=max_results,
+    )
+
+
+# ============================================================
+# 工具 5：法規名稱轉 pcode
 # ============================================================
 
 @mcp.tool()
