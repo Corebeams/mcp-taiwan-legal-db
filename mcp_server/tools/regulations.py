@@ -10,8 +10,10 @@ import zipfile
 from urllib.parse import quote
 
 import httpx
+from bs4 import BeautifulSoup
 from mcp_server.config import (
     REGULATION_API_BASE,
+    REGULATION_HISTORY_URL,
     REGULATION_SINGLE_URL,
     REGULATION_ALL_URL,
     REGULATION_OLDVERLIST_URL,
@@ -145,6 +147,30 @@ def _format_roc_date(lnndate: str) -> str:
         return lnndate
     year = int(lnndate[:4]) - 1911
     return f"民國{year}年{lnndate[4:6]}月{lnndate[6:8]}日"
+
+
+def _parse_law_history_page(html: str, pcode: str, source_url: str) -> dict:
+    soup = BeautifulSoup(html, "html.parser")
+    law_name = soup.select_one("#hlLawName")
+    entries = [
+        re.sub(r"\s+", " ", element.get_text(" ", strip=True))
+        for element in soup.select(
+            ".law-reg-content.law-content.law-history .col-data.text-pre"
+        )
+    ]
+    if not law_name or not entries:
+        return error_response(
+            "全國法規資料庫沿革頁面缺少法規名稱或沿革內容",
+            pcode=pcode,
+            source_url=source_url,
+        )
+    return {
+        "success": True,
+        "pcode": pcode,
+        "law_name": law_name.get_text(" ", strip=True),
+        "history": "\n".join(entries),
+        "source_url": source_url,
+    }
 
 
 # 舊版頁面常見的異體寫法（含 Big5 轉換把「市」轉成「巿」），比對前統一；「︰」須在 NFKC 前換掉，否則會變成「..」
@@ -381,6 +407,29 @@ class RegulationClient:
 
     async def close(self):
         await self.client.aclose()
+
+    async def get_law_history_page(self, pcode: str) -> dict:
+        """即時讀取全國法規資料庫 LawHistory.aspx 的整部法規沿革。"""
+        pcode = pcode.strip().upper()
+        if not re.fullmatch(r"[A-Z]\d{7}", pcode):
+            return error_response("pcode 格式錯誤", pcode=pcode)
+        if not validate_url_domain(REGULATION_HISTORY_URL):
+            return error_response("法規沿革網址不在白名單中", pcode=pcode)
+
+        try:
+            response = await self.client.get(
+                REGULATION_HISTORY_URL,
+                params={"pcode": pcode},
+            )
+            response.raise_for_status()
+        except httpx.TimeoutException:
+            logger.exception("法規沿革查詢逾時: %s", pcode)
+            return error_response("查詢法規沿革逾時，請稍後重試", pcode=pcode)
+        except httpx.HTTPError:
+            logger.exception("法規沿革查詢 HTTP 失敗: %s", pcode)
+            return error_response("查詢法規沿革失敗，請稍後重試", pcode=pcode)
+
+        return _parse_law_history_page(response.text, pcode, str(response.url))
 
     def _resolve_law_name(self, pcode: str, parsed_name: str = "") -> str:
         """從 pcode 反查法規名稱"""
