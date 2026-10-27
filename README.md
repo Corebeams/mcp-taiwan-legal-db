@@ -301,7 +301,7 @@ search_law_changes(
 )
 ```
 
-`has_more=True` 表示結果超過 `max_results`；縮小查詢期間即可繼續分批查詢。
+回傳 `pages` 依全國法規資料庫原始結果頁提供 `page_number`、`result_start` 與 `result_count`，標示該頁在 `results` 中的範圍；另提供 `pages_fetched` 與 `total_pages`。`total_pages` 為 `null` 或 `has_more=True` 表示結果超過 `max_results`（上限 2,000 筆），此時結果不完整，不可當作完整查詢。
 </details>
 
 <details>

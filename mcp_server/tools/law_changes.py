@@ -30,7 +30,7 @@ _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
-_MAX_RESULTS = 200
+_MAX_RESULTS = 2000
 
 _CATEGORIES: dict[str, tuple[str, str]] = {
     "central_laws": ("chk5", "L"),
@@ -251,23 +251,36 @@ class LawChangeSearchClient:
             response.raise_for_status()
             search_url = str(response.url)
             results: list[dict] = []
+            pages: list[dict] = []
             seen: set[tuple[str, str]] = set()
             has_more = False
             visited_pages: set[str] = set()
 
             while True:
                 page_results, next_url = _parse_result_page(response.text, str(response.url))
+                unique_page_results: list[dict] = []
+                current_page_has_more = False
+                result_start = len(results)
                 for item in page_results:
                     identity = (item["title"], item["source_url"])
                     if identity in seen:
                         continue
+                    if len(results) >= max_results:
+                        current_page_has_more = True
+                        continue
                     seen.add(identity)
                     results.append(item)
-                    if len(results) >= max_results:
-                        break
+                    unique_page_results.append(item)
+                pages.append(
+                    {
+                        "page_number": len(pages) + 1,
+                        "result_count": len(unique_page_results),
+                        "result_start": result_start,
+                    }
+                )
 
                 if len(results) >= max_results:
-                    has_more = next_url is not None
+                    has_more = current_page_has_more or next_url is not None
                     break
                 if not next_url or next_url in visited_pages:
                     break
@@ -283,6 +296,9 @@ class LawChangeSearchClient:
                 "query": query,
                 "total_count": len(results),
                 "results": results,
+                "pages": pages,
+                "pages_fetched": len(pages),
+                "total_pages": None if has_more else len(pages),
                 "has_more": has_more,
                 "source_url": search_url,
                 "timestamp": datetime.now().isoformat(),

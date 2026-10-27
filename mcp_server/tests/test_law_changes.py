@@ -74,11 +74,45 @@ async def test_search_defaults_all_filters_and_follows_result_pages():
     assert result["success"] is True
     assert result["total_count"] == 2
     assert result["has_more"] is False
+    assert result["total_pages"] == 2
+    assert result["pages_fetched"] == 2
+    assert [page["page_number"] for page in result["pages"]] == [1, 2]
+    assert [page["result_start"] for page in result["pages"]] == [0, 1]
+    assert [page["result_count"] for page in result["pages"]] == [1, 1]
     assert result["results"][0]["category"] == "中央法規"
     assert result["results"][0]["change_date"] == "2026-09-23"
     assert result["results"][0]["source_url"] == (
         "https://law.moj.gov.tw/LawClass/LawAll.aspx?PCODE=B0000001"
     )
+
+
+@pytest.mark.asyncio
+async def test_search_reports_incomplete_page_count_when_result_limit_truncates():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.endswith("LawSearchAll.aspx"):
+            return httpx.Response(200, text=_FORM, request=request)
+        if request.method == "POST":
+            return httpx.Response(200, text=_PAGE_ONE, request=request)
+        return httpx.Response(200, text=_PAGE_TWO, request=request)
+
+    http, client = _mocked_client(handler)
+    try:
+        result = await client.search(
+            date_from="2026-09-23",
+            date_to="2026-09-24",
+            max_results=1,
+        )
+    finally:
+        await http.aclose()
+
+    assert result["success"] is True
+    assert result["total_count"] == 1
+    assert result["has_more"] is True
+    assert result["total_pages"] is None
+    assert result["pages_fetched"] == 1
+    assert result["pages"][0]["page_number"] == 1
+    assert result["pages"][0]["result_start"] == 0
+    assert result["pages"][0]["result_count"] == 1
 
 
 @pytest.mark.asyncio

@@ -406,7 +406,9 @@ async def search_law_changes(
 
     查詢條件至少提供 keyword、完整日期區間或 document_number 其中一項。
     日期可用西元 YYYY-MM-DD 或民國七碼（例如 1150924）。
-    預設每項查詢最多回傳 100 筆，結果可能分頁，has_more 為 True 時可縮小期間再查。
+    預設每項查詢最多回傳 100 筆，最多 2,000 筆。回傳 pages、pages_fetched、
+    total_pages，並以 result_start、result_count 標示原始結果頁在 results 中的範圍；
+    total_pages 為 null 或 has_more 為 True 表示結果超過上限，不能視為完整結果。
     """
     return await law_change_search.search(
         keyword=keyword,
