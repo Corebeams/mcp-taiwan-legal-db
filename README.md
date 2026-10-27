@@ -254,6 +254,9 @@ query_regulation(law_name="律師法")
 # 附修法沿革；指定條號時另回傳該條歷次條文（article_history）
 query_regulation(law_name="勞動基準法", article_no="24", include_history=True)
 
+# 整部法規沿革即時來自 LawHistory.aspx
+query_regulation(pcode="N0030001", include_history=True)
+
 # 官方英譯（約 970 部法律與部分命令）
 query_regulation(law_name="勞動基準法", article_no="24", language="en")
 ```
@@ -262,7 +265,7 @@ query_regulation(law_name="勞動基準法", article_no="24", language="en")
 
 `language="en"` 回傳官方英譯本與 `english_version_date`；英譯常落後中文修正，版本較舊時 `note` 會提醒，法律效力以中文為準。英譯檔第一次查詢時下載到使用者資料目錄（約 16 MB），每週更新。
 
-指定條號並開啟 `include_history` 時，`article_history.revisions` 會列出該條每次制定、增訂、修正、刪除的日期與當時條文，可直接前後對照。只讀取修法沿革中動到該條的歷史版本（例如民法第 184 條只需 36 個版本中的 5 個），版本清單與歷史版本全文都會快取；讀取失敗的版本會列在 `failed_versions` 並標 `partial`。
+開啟 `include_history` 時，整部法規沿革即時讀取全國法規資料庫 `LawHistory.aspx?pcode=...`，並回傳 `history_available` 與 `history_source_url`；沿革頁失敗會明確回傳 `history_error`。指定單一條號時，另附 `article_history.revisions`，列出該條每次制定、增訂、修正、刪除的日期與當時條文，可直接前後對照。條文歷史版本清單與全文會快取；讀取失敗的版本會列在 `failed_versions` 並標 `partial`。
 
 支援 `law_name`（自動解析 pcode，縮寫如「勞基法」也可）或直接傳 `pcode`。超過 50 條時回傳 `has_more` 與續查起點；指定了卻不存在的單條列在 `missing`。`from_no`／`to_no` 等同 `article_no="起~迄"`。
 </details>
@@ -298,7 +301,7 @@ search_law_changes(
 )
 ```
 
-`has_more=True` 表示結果超過 `max_results`；縮小查詢期間即可繼續分批查詢。
+回傳 `pages` 依全國法規資料庫原始結果頁提供 `page_number`、`result_start` 與 `result_count`，標示該頁在 `results` 中的範圍；另提供 `pages_fetched` 與 `total_pages`。`total_pages` 為 `null` 或 `has_more=True` 表示結果超過 `max_results`（上限 2,000 筆），此時結果不完整，不可當作完整查詢。
 </details>
 
 <details>

@@ -310,17 +310,17 @@ async def query_regulation(
             不填 = 只回目錄。超過 50 條時回傳 has_more 與續查起點，指定卻不存在的單條列在 missing
         from_no: 起始條號，與 to_no 合用等於 article_no 的「起~迄」
         to_no: 截止條號
-        include_history: 是否包含修法沿革（使用者詢問修法歷程、修正時間、歷次修正內容時設為 True）。
+        include_history: 是否包含即時整部修法沿革（LawHistory.aspx）。
             搭配單一條號時，會額外回傳該條文「歷次條文全文」(article_history)，
             可直接前後對比同一條在不同時間的條文細節。
         language: 「en」取官方英譯本（約 970 部法律與部分命令；英譯常落後中文修正，note 會提醒版本差異）
 
     Returns:
         包含法規條文的字典：law (pcode, name, status), articles, source_url,
-        history（選填，整部法規的修法沿革文字）,
+        history、history_available、history_source_url（選填，整部法規即時沿革）,
         article_history（選填，僅在 include_history＋單一條號時提供，為該條歷次條文全文）
     """
-    from mcp_server.tools.regulations import SPEC_HELP, article_label, get_law_history, parse_article_spec
+    from mcp_server.tools.regulations import SPEC_HELP, article_label, parse_article_spec
 
     # 解析 pcode
     if not pcode and law_name:
@@ -358,11 +358,20 @@ async def query_regulation(
     if result.get("success") and isinstance(result.get("law"), dict):
         result["law"].update(law_meta_fields(pcode))
 
-    # 附加修法沿革
-    if include_history and result.get("success"):
-        history = get_law_history(pcode)
-        if history:
-            result["history"] = history
+    # 全部法規沿革即時來自 LawHistory.aspx；條號歷史全文另由 article_history 提供。
+    if include_history:
+        history_result = await reg_client.get_law_history_page(pcode)
+        result["history_available"] = history_result.get("success") is True
+        result["history_source_url"] = history_result.get("source_url", "")
+        if history_result.get("success"):
+            result["history"] = history_result["history"]
+            result["law"] = {
+                **(result.get("law") if isinstance(result.get("law"), dict) else {}),
+                "name": history_result["law_name"],
+                "pcode": pcode,
+            }
+        else:
+            result["history_error"] = history_result.get("error", "法規沿革無法取得")
     # 查詢單一條文時，額外附上該條歷次條文全文（跨版本前後對比）。現行查無此條（例如已刪除）時
     # 歷史版本仍可能有，照樣查。不論成功與否都回傳 article_history，讓呼叫端能區分「歷史抓取失敗」
     # （available=False + reason）與「確實無歷史/無此條」。
@@ -397,7 +406,9 @@ async def search_law_changes(
 
     查詢條件至少提供 keyword、完整日期區間或 document_number 其中一項。
     日期可用西元 YYYY-MM-DD 或民國七碼（例如 1150924）。
-    預設每項查詢最多回傳 100 筆，結果可能分頁，has_more 為 True 時可縮小期間再查。
+    預設每項查詢最多回傳 100 筆，最多 2,000 筆。回傳 pages、pages_fetched、
+    total_pages，並以 result_start、result_count 標示原始結果頁在 results 中的範圍；
+    total_pages 為 null 或 has_more 為 True 表示結果超過上限，不能視為完整結果。
     """
     return await law_change_search.search(
         keyword=keyword,
